@@ -199,7 +199,7 @@ static void input_loop(void *arg) {
     (void)arg;
     padInfo padinfo;
     padData paddata;
-    int last_buttons = 0;
+    int last_buttons[MAX_PORT_NUM] = {0};
 
     int buttonFlags = 0;
     short leftStickX = 0;
@@ -215,22 +215,38 @@ static void input_loop(void *arg) {
     ioMouseInit(7);
 
     // Enable pressure-sensitivity
-    ioPadSetPortSetting(0, PAD_SETTINGS_PRESS_ON);
+    for(int i = 0; i < MAX_PORT_NUM; i++) ioPadSetPortSetting(i, PAD_SETTINGS_PRESS_ON);
 
     while(active_input_thread) {
         // 1. Controller Polling
         ioPadGetInfo(&padinfo);
-        for(int i = 0; i < 1; i++) { // Polling primary controller (index 0)
+        short active_mask = 0;
+        for (int i = 0; i < MAX_PORT_NUM; i++) {
+            if (padinfo.status[i]) {
+                active_mask |= (1 << i);
+            }
+        }
+
+        int pad_mode = ui_get_pad_mode();
+
+        for(int i = 0; i < MAX_PORT_NUM; i++) {
             if(padinfo.status[i]) {
                 ioPadGetData(i, &paddata);
 
                 if (paddata.len > 0) {
                     buttonFlags = 0;
-                    
-                    if (paddata.BTN_CROSS) buttonFlags |= A_FLAG;
-                    if (paddata.BTN_CIRCLE) buttonFlags |= B_FLAG;
-                    if (paddata.BTN_SQUARE) buttonFlags |= X_FLAG;
-                    if (paddata.BTN_TRIANGLE) buttonFlags |= Y_FLAG;
+
+                    if (pad_mode == PAD_MODE_DS4_DIRECT) {
+                        if (paddata.BTN_CROSS) buttonFlags |= X_FLAG;
+                        if (paddata.BTN_CIRCLE) buttonFlags |= A_FLAG;
+                        if (paddata.BTN_SQUARE) buttonFlags |= B_FLAG;
+                        if (paddata.BTN_TRIANGLE) buttonFlags |= Y_FLAG;
+                    } else {
+                        if (paddata.BTN_CROSS) buttonFlags |= A_FLAG;
+                        if (paddata.BTN_CIRCLE) buttonFlags |= B_FLAG;
+                        if (paddata.BTN_SQUARE) buttonFlags |= X_FLAG;
+                        if (paddata.BTN_TRIANGLE) buttonFlags |= Y_FLAG;
+                    }
                     
                     if (paddata.BTN_UP) buttonFlags |= UP_FLAG;
                     if (paddata.BTN_DOWN) buttonFlags |= DOWN_FLAG;
@@ -263,30 +279,30 @@ static void input_loop(void *arg) {
                     leftTrigger = (unsigned char) paddata.PRE_L2;
                     rightTrigger = (unsigned char) paddata.PRE_R2;
 
-                    // Send controller event to Moonlight/Sunshine server
-                    LiSendControllerEvent(buttonFlags, leftTrigger, rightTrigger, leftStickX, leftStickY, rightStickX, rightStickY);
+                    LiSendMultiControllerEvent((short)i, active_mask, buttonFlags, leftTrigger, rightTrigger, leftStickX, leftStickY, rightStickX, rightStickY);
 
-                    // Update shared state for UI
-                    sysMutexLock(pad_state_mutex, 0);
-                    g_pad_state.buttons_down = buttonFlags;
-                    g_pad_state.buttons_pressed |= (buttonFlags & ~last_buttons);
-                    g_pad_state.lx = leftStickX;
-                    g_pad_state.ly = leftStickY;
-                    g_pad_state.rx = rightStickX;
-                    g_pad_state.ry = rightStickY;
-                    sysMutexUnlock(pad_state_mutex);
+                    if (i == 0) {
+                        sysMutexLock(pad_state_mutex, 0);
+                        g_pad_state.buttons_down = buttonFlags;
+                        g_pad_state.buttons_pressed |= (buttonFlags & ~last_buttons[0]);
+                        g_pad_state.lx = leftStickX;
+                        g_pad_state.ly = leftStickY;
+                        g_pad_state.rx = rightStickX;
+                        g_pad_state.ry = rightStickY;
+                        sysMutexUnlock(pad_state_mutex);
+                    }
 
-                    last_buttons = buttonFlags;
+                    last_buttons[i] = buttonFlags;
                 }
+            } else if (last_buttons[i] != 0) {
+                LiSendMultiControllerEvent((short)i, active_mask, 0, 0, 0, 0, 0, 0, 0);
+                if (i == 0) {
+                    sysMutexLock(pad_state_mutex, 0);
+                    memset(&g_pad_state, 0, sizeof(g_pad_state));
+                    sysMutexUnlock(pad_state_mutex);
+                }
+                last_buttons[i] = 0;
             }
-        }
-
-        if (!padinfo.status[0] && last_buttons != 0) {
-            LiSendControllerEvent(0, 0, 0, 0, 0, 0, 0);
-            sysMutexLock(pad_state_mutex, 0);
-            memset(&g_pad_state, 0, sizeof(g_pad_state));
-            sysMutexUnlock(pad_state_mutex);
-            last_buttons = 0;
         }
 
         // 2. Mouse Polling (USB / Bluetooth HID Mice)

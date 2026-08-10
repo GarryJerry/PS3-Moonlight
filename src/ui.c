@@ -51,13 +51,14 @@ static int ui_bitrate_options[] = {2500, 5000, 10000, 15000, 20000, 25000};
 #define NUM_BITRATE_OPTIONS (int)(sizeof(ui_bitrate_options) / sizeof(ui_bitrate_options[0]))
 static int ui_bitrate_idx = 2; // Default: 10 Mbps
 static int ui_vsync = 1; // Default: VSync ON (1)
+static int ui_pad_mode = PAD_MODE_STANDARD; // Default: Standard PS3
 
 // Navigation item counts for Main Menu and Settings Submenu
 #define MAIN_MENU_ITEM_COUNT 3
 static int active_main_item = 0; // 0: Sunshine Host IP, 1: Configure Settings, 2: Connect/Pair
 
-#define SETTINGS_ITEM_COUNT 7
-static int active_settings_item = 0; // 0: FPS, 1: Bitrate, 2: Mouse, 3: VSync, 4: Stats, 5: Verbose, 6: Back
+#define SETTINGS_ITEM_COUNT 8
+static int active_settings_item = 0; // 0: FPS, 1: Bitrate, 2: Mouse, 3: VSync, 4: Stats, 5: Verbose, 6: Controller Layout, 7: Back
 
 static int frames_drawn_this_sec = 0;
 static int ui_fps_actual = 0;
@@ -86,6 +87,7 @@ int ui_get_vsync() { return ui_vsync; }
 int ui_get_show_stats() { return show_stats; }
 int ui_get_verbose() { return ui_verbose; }
 int ui_get_mouse_mode(void) { return ui_mouse_mode; }
+int ui_get_pad_mode(void) { return ui_pad_mode; }
 
 static char pairing_pin_str[16] = "";
 
@@ -286,6 +288,7 @@ void ui_save_settings(void) {
     fprintf(f, "vsync=%d\n", ui_vsync ? 1 : 0);
     fprintf(f, "stats=%d\n", show_stats ? 1 : 0);
     fprintf(f, "verbose=%d\n", ui_verbose ? 1 : 0);
+    fprintf(f, "pad_mode=%d\n", ui_pad_mode);
 
     for (int i = 0; i < saved_host_count; i++) {
         fprintf(f, "\n[host.%d]\n", i);
@@ -362,6 +365,7 @@ void ui_load_settings(void) {
             else if (strcmp(key, "vsync") == 0) ui_vsync = (atoi(val) != 0);
             else if (strcmp(key, "stats") == 0) show_stats = (atoi(val) != 0);
             else if (strcmp(key, "verbose") == 0) ui_verbose = (atoi(val) != 0);
+            else if (strcmp(key, "pad_mode") == 0) { int v = atoi(val); ui_pad_mode = (v == 0) ? PAD_MODE_STANDARD : PAD_MODE_DS4_DIRECT; }
             else if ((strcmp(key, "host_ip") == 0 || strcmp(key, "ip") == 0) && val[0]) {
                 if (saved_host_count == 0) {
                     int i = ui_upsert_saved_host("Saved Host", val);
@@ -1034,6 +1038,12 @@ static void ui_loop(void *arg) {
                     ui_save_settings();
                 }
             } else if (active_settings_item == 6) {
+                // Controller layout toggle
+                if ((pad.buttons_pressed & A_FLAG) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
+                    ui_pad_mode = (ui_pad_mode == PAD_MODE_STANDARD) ? PAD_MODE_DS4_DIRECT : PAD_MODE_STANDARD;
+                    ui_save_settings();
+                }
+            } else if (active_settings_item == 7) {
                 // Back to Main Menu
                 if (pad.buttons_pressed & A_FLAG) {
                     ui_save_settings();
@@ -1275,10 +1285,17 @@ static void ui_loop(void *arg) {
                 SetFontColor((active_settings_item == 5) ? 0xff82b1ff : 0xffffffff, 0);
                 DrawFormatString(SX(430), SY(280), "[ %s ]", ui_verbose ? "ON" : "OFF");
 
-                // Row 6: Back to Main Menu Button
-                SetFontSize(SF(22), SF(22));
+                // Row 6: Controller Layout
+                SetFontColor((active_settings_item == 6) ? 0xff82b1ff : 0xffb0bec5, 0);
+                DrawString(SX(60), SY(315), "Controller Layout:");
+
                 SetFontColor((active_settings_item == 6) ? 0xff82b1ff : 0xffffffff, 0);
-                DrawString(SX(60), SY(330), "[ BACK TO MAIN MENU ]");
+                DrawFormatString(SX(430), SY(315), "[ %s ]", (ui_pad_mode == PAD_MODE_DS4_DIRECT) ? "DualShock 4 Direct" : "Standard PS3");
+
+                // Row 7: Back to Main Menu Button
+                SetFontSize(SF(22), SF(22));
+                SetFontColor((active_settings_item == 7) ? 0xff82b1ff : 0xffffffff, 0);
+                DrawString(SX(60), SY(360), "[ BACK TO MAIN MENU ]");
 
                 // Clean controls legend
                 SetFontSize(SF(18), SF(18));
