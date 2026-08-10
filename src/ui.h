@@ -15,6 +15,11 @@ enum {
     UI_STATE_DISCOVERY
 };
 
+enum {
+    PAD_MODE_STANDARD = 0,
+    PAD_MODE_DS4_DIRECT = 1
+};
+
 void ui_init(int width, int height);
 void ui_push_log(const char *msg);
 void ui_set_state(int state);
@@ -34,6 +39,7 @@ int ui_get_vsync();
 int ui_get_show_stats();
 int ui_get_verbose();
 int ui_get_mouse_mode(void);
+int ui_get_pad_mode(void);
 void ui_save_settings(void);
 void ui_load_settings(void);
 void ui_set_pairing_pin(const char *pin);
