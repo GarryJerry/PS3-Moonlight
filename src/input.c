@@ -214,6 +214,9 @@ static void input_loop(void *arg) {
     ioKbInit(7);
     ioMouseInit(7);
 
+    // Enable pressure-sensitivity
+    ioPadSetPortSetting(0, PAD_SETTINGS_PRESS_ON);
+
     while(active_input_thread) {
         // 1. Controller Polling
         ioPadGetInfo(&padinfo);
@@ -226,9 +229,8 @@ static void input_loop(void *arg) {
                     
                     if (paddata.BTN_CROSS) buttonFlags |= A_FLAG;
                     if (paddata.BTN_CIRCLE) buttonFlags |= B_FLAG;
-                    // Swap Square and Triangle mappings to match user's physical-to-virtual layout
-                    if (paddata.BTN_SQUARE) buttonFlags |= Y_FLAG;
-                    if (paddata.BTN_TRIANGLE) buttonFlags |= X_FLAG;
+                    if (paddata.BTN_SQUARE) buttonFlags |= X_FLAG;
+                    if (paddata.BTN_TRIANGLE) buttonFlags |= Y_FLAG;
                     
                     if (paddata.BTN_UP) buttonFlags |= UP_FLAG;
                     if (paddata.BTN_DOWN) buttonFlags |= DOWN_FLAG;
@@ -258,8 +260,8 @@ static void input_loop(void *arg) {
                     rightStickX = tempRX > 32767 ? 32767 : (tempRX < -32768 ? -32768 : tempRX);
                     rightStickY = tempRY > 32767 ? 32767 : (tempRY < -32768 ? -32768 : tempRY);
 
-                    leftTrigger = paddata.BTN_L2 ? 0xFF : 0x00;
-                    rightTrigger = paddata.BTN_R2 ? 0xFF : 0x00;
+                    leftTrigger = (unsigned char) paddata.PRE_L2;
+                    rightTrigger = (unsigned char) paddata.PRE_R2;
 
                     // Send controller event to Moonlight/Sunshine server
                     LiSendControllerEvent(buttonFlags, leftTrigger, rightTrigger, leftStickX, leftStickY, rightStickX, rightStickY);
