@@ -46,9 +46,9 @@ static char target_ip_str[64] = "192.168.1.1";
 
 // Video and stream preferences
 static int ui_fps = 60;
-static int ui_bitrate_options[] = {2500, 5000, 10000};
+static int ui_bitrate_options[] = {2500, 5000, 10000, 15000, 20000, 25000};
 #define NUM_BITRATE_OPTIONS (int)(sizeof(ui_bitrate_options) / sizeof(ui_bitrate_options[0]))
-static int ui_bitrate_idx = 2; // Default: 10 Mbps (Maximum)
+static int ui_bitrate_idx = 2; // Default: 10 Mbps
 static int ui_vsync = 1; // Default: VSync ON (1)
 
 // Navigation item counts for Main Menu and Settings Submenu
