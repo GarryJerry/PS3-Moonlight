@@ -23,6 +23,7 @@
 #include "ui.h"
 #include "video.h"
 #include "input.h"
+#include "moonlight_discovery.h"
 
 SYS_PROCESS_PARAM(1001, 0x100000)
 
@@ -76,6 +77,51 @@ int main(int argc, char **argv) {
   NLOG("Moonlight PS3 UI Initialized");
   
   while (ui_is_running()) {
+    if (ui_get_state() == UI_STATE_DISCOVERY) {
+      NLOG("Discovery: searching for Sunshine via mDNS...");
+      mld_host_t hosts[MLD_MAX_HOSTS];
+      int found = mld_scan(hosts, MLD_MAX_HOSTS, 0);
+      if (found < 0) found = 0;
+
+      if (found == 0) {
+        NLOG("Discovery: no hosts found, falling back to manual entry.");
+        ui_set_state(UI_STATE_IP_ENTRY);
+        ui_open_osk();
+        continue;
+      }
+
+      NLOG("Discovery: found %d host(s).", found);
+      ui_set_discovered_hosts(hosts, found);
+
+      while (ui_is_running() && ui_get_state() == UI_STATE_DISCOVERY && !ui_is_host_selected()) {
+        sysUtilCheckCallback();
+        usleep(20000);
+      }
+
+      if (!ui_is_running() || ui_get_state() != UI_STATE_DISCOVERY) continue;
+
+      if (ui_wants_manual_entry()) {
+        ui_reset_host_selection();
+        ui_set_state(UI_STATE_IP_ENTRY);
+        ui_open_osk();
+        continue;
+      }
+
+      char chosen_ip[64]; char chosen_name[64];
+      if (ui_get_selected_host_ip(chosen_ip, sizeof(chosen_ip)) &&
+          ui_get_selected_host_name(chosen_name, sizeof(chosen_name))) {
+        int host_idx = ui_upsert_saved_host(chosen_name, chosen_ip);
+        ui_select_host(host_idx);
+        ui_save_settings();
+        char logmsg[96];
+        snprintf(logmsg, sizeof(logmsg), "Selected host: %s (%s)", chosen_name, chosen_ip);
+        ui_push_log(logmsg);
+      }
+      ui_reset_host_selection();
+      ui_set_state(UI_STATE_IP_ENTRY);
+      continue;
+    }
+
     if (ui_get_state() == UI_STATE_PAIRING) {
       const char *pcIp = ui_get_target_ip();
       NLOG("Attempting to connect to: %s", pcIp);
@@ -121,6 +167,8 @@ int main(int argc, char **argv) {
             continue;
           }
           ui_push_log("H: Pairing succeeded!");
+          ui_set_host_paired(ui_get_selected_host_index(), 1);
+          ui_save_settings();
       } else {
           NLOG("H: Already paired with server. Skipping PIN entry.");
       }
@@ -188,6 +236,9 @@ int main(int argc, char **argv) {
       }
 
       // If we reach here, launch was successful!
+      ui_set_host_last_app(ui_get_selected_host_index(), app_id);
+      ui_save_settings();
+
       // Setup Stream
       STREAM_CONFIGURATION streamConfig;
       LiInitializeStreamConfiguration(&streamConfig);

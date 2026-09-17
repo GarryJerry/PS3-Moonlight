@@ -35,7 +35,7 @@ BUILD		:= build
 TIMESTAMP		:= $(shell date +%Y%m%d_%H%M%S)
 OUT_PKG			:= $(BUILD)/$(TARGET)-$(TIMESTAMP).pkg
 OUT_GNPDRM_PKG	:= $(BUILD)/$(TARGET)-$(TIMESTAMP).gnpdrm.pkg
-OFILES			:= src/main.o src/ui.o src/video.o src/ps3_compat.o src/random.o src/net_logger.o src/openssl_compat.o src/connection.o src/input.o src/audio.o src/handshake.o
+OFILES			:= src/main.o src/ui.o src/video.o src/ps3_compat.o src/random.o src/net_logger.o src/openssl_compat.o src/connection.o src/input.o src/audio.o src/handshake.o src/moonlight_discovery.o
 # Enable Cell Broadband Engine CPU optimizations for the PowerPC Processing Unit (PPU)
 CFLAGS			+= -mcpu=cell -O2 -Wall -Wextra -Werror=implicit-function-declaration -MMD -MP -I$(PS3DEV)/ppu/include -I$(PS3DEV)/portlibs/ppu/include -I$(PS3DEV)/portlibs/ppu/include/freetype2 -I./src -I./third_party/moonlight-common-c/src -I./third_party/opus/include -include src/openssl_compat.h -fno-lto
 LDFLAGS     	+= -fno-lto -Wl,--no-undefined -Wl,--as-needed

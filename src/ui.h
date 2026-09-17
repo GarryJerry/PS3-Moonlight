@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "handshake.h"
+#include "moonlight_discovery.h"
 
 enum {
     UI_STATE_IP_ENTRY,
@@ -10,7 +11,8 @@ enum {
     UI_STATE_PAIRING,
     UI_STATE_APPLIST,
     UI_STATE_STREAMING,
-    UI_STATE_ERROR
+    UI_STATE_ERROR,
+    UI_STATE_DISCOVERY
 };
 
 void ui_init(int width, int height);
@@ -43,5 +45,31 @@ int ui_get_selected_app_id(void);
 const char* ui_get_selected_app_name(void);
 int ui_is_app_selected(void);
 void ui_reset_app_selection(void);
+
+// Multi-host saved config
+#define UI_MAX_SAVED_HOSTS 8
+
+typedef struct {
+    char name[64];
+    char address[16];
+    int  paired;
+    int  last_app_id; /* -1 = nessuno */
+} ui_saved_host_t;
+
+int  ui_get_saved_host_count(void);
+const ui_saved_host_t *ui_get_saved_host(int idx);
+int  ui_get_selected_host_index(void);
+void ui_select_host(int idx);
+int  ui_upsert_saved_host(const char *name, const char *address);
+void ui_set_host_paired(int idx, int paired);
+void ui_set_host_last_app(int idx, int app_id);
+
+// Host discovery state helpers
+void ui_set_discovered_hosts(const mld_host_t *hosts, int count);
+int  ui_is_host_selected(void);
+int  ui_wants_manual_entry(void);
+int  ui_get_selected_host_ip(char *out, size_t out_size);
+int  ui_get_selected_host_name(char *out, size_t out_size);
+void ui_reset_host_selection(void);
 
 #endif
