@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <lv2/systime.h>
 #include "input.h"
+#include "moonlight_discovery.h"
 #include <Limelight.h>
 #include "video.h"
 #include "audio.h"
@@ -138,6 +139,104 @@ void ui_reset_app_selection(void) {
     app_selection_confirmed = 0;
 }
 
+// Multi-host saved config
+static ui_saved_host_t saved_hosts[UI_MAX_SAVED_HOSTS];
+static int saved_host_count = 0;
+static int selected_host_idx = -1;
+
+int ui_get_saved_host_count(void) { return saved_host_count; }
+
+const ui_saved_host_t *ui_get_saved_host(int idx) {
+    if (idx < 0 || idx >= saved_host_count) return NULL;
+    return &saved_hosts[idx];
+}
+
+int ui_get_selected_host_index(void) { return selected_host_idx; }
+
+void ui_select_host(int idx) {
+    if (idx < 0 || idx >= saved_host_count) return;
+    selected_host_idx = idx;
+    ui_set_target_ip(saved_hosts[idx].address);
+}
+
+int ui_upsert_saved_host(const char *name, const char *address) {
+    if (!address || !*address) return -1;
+    for (int i = 0; i < saved_host_count; i++) {
+        if (strcmp(saved_hosts[i].address, address) == 0) {
+            if (name && *name) {
+                strncpy(saved_hosts[i].name, name, sizeof(saved_hosts[i].name) - 1);
+                saved_hosts[i].name[sizeof(saved_hosts[i].name) - 1] = '\0';
+            }
+            return i;
+        }
+    }
+    int idx;
+    if (saved_host_count < UI_MAX_SAVED_HOSTS) {
+        idx = saved_host_count++;
+    } else {
+        idx = (selected_host_idx >= 0) ? selected_host_idx : 0;
+    }
+    memset(&saved_hosts[idx], 0, sizeof(saved_hosts[idx]));
+    strncpy(saved_hosts[idx].name, (name && *name) ? name : "Unnamed Host",
+            sizeof(saved_hosts[idx].name) - 1);
+    strncpy(saved_hosts[idx].address, address, sizeof(saved_hosts[idx].address) - 1);
+    saved_hosts[idx].paired = 0;
+    saved_hosts[idx].last_app_id = -1;
+    return idx;
+}
+
+void ui_set_host_paired(int idx, int paired) {
+    if (idx < 0 || idx >= saved_host_count) return;
+    saved_hosts[idx].paired = paired ? 1 : 0;
+}
+
+void ui_set_host_last_app(int idx, int app_id) {
+    if (idx < 0 || idx >= saved_host_count) return;
+    saved_hosts[idx].last_app_id = app_id;
+}
+
+// Host Discovery State
+static mld_host_t discovered_hosts[MLD_MAX_HOSTS];
+static int discovered_host_count = 0;
+static int discovery_scanned = 0;
+static int active_host_idx = 0;
+static volatile int host_selection_confirmed = 0;
+static volatile int manual_entry_requested = 0;
+
+void ui_set_discovered_hosts(const mld_host_t *hosts, int count) {
+    if (count < 0) count = 0;
+    if (count > MLD_MAX_HOSTS) count = MLD_MAX_HOSTS;
+    if (hosts && count > 0) memcpy(discovered_hosts, hosts, sizeof(mld_host_t) * count);
+    discovered_host_count = count;
+    discovery_scanned = 1;
+    active_host_idx = 0;
+}
+
+int ui_is_host_selected(void) { return host_selection_confirmed || manual_entry_requested; }
+int ui_wants_manual_entry(void) { return manual_entry_requested; }
+
+int ui_get_selected_host_ip(char *out, size_t out_size) {
+    if (!host_selection_confirmed) return 0;
+    if (active_host_idx < 0 || active_host_idx >= discovered_host_count) return 0;
+    snprintf(out, out_size, "%s", discovered_hosts[active_host_idx].address);
+    return 1;
+}
+
+int ui_get_selected_host_name(char *out, size_t out_size) {
+    if (!host_selection_confirmed) return 0;
+    if (active_host_idx < 0 || active_host_idx >= discovered_host_count) return 0;
+    snprintf(out, out_size, "%s", discovered_hosts[active_host_idx].name);
+    return 1;
+}
+
+void ui_reset_host_selection(void) {
+    host_selection_confirmed = 0;
+    manual_entry_requested = 0;
+    discovery_scanned = 0;
+    discovered_host_count = 0;
+    active_host_idx = 0;
+}
+
 void ui_set_target_ip(const char *str) {
     if (!str || !*str) return;
     int o[4];
@@ -166,70 +265,124 @@ const char* ui_get_target_ip() {
 void ui_save_settings(void) {
     mkdir("/dev_hdd0/game/MNLT00001", 0700);
     mkdir(CONFIG_DIR, 0700);
-    
-    FILE *f = fopen(CONFIG_PATH, "w");
+
+    const char *final_path = CONFIG_PATH;
+    char tmp_path[144];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", final_path);
+
+    FILE *f = fopen(tmp_path, "w");
     if (!f) {
-        f = fopen("config.ini", "w");
+        final_path = "config.ini";
+        snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", final_path);
+        f = fopen(tmp_path, "w");
     }
-    if (f) {
-        fprintf(f, "# PS3-Moonlight Configuration File\n");
-        fprintf(f, "host_ip=%s\n", target_ip_str);
-        fprintf(f, "fps=%d\n", ui_fps);
-        fprintf(f, "bitrate_idx=%d\n", ui_bitrate_idx);
-        fprintf(f, "mouse_mode=%d\n", ui_mouse_mode);
-        fprintf(f, "vsync=%d\n", ui_vsync ? 1 : 0);
-        fprintf(f, "stats=%d\n", show_stats ? 1 : 0);
-        fprintf(f, "verbose=%d\n", ui_verbose ? 1 : 0);
-        fflush(f);
-        fclose(f);
+    if (!f) return;
+
+    fprintf(f, "# PS3-Moonlight Configuration File\n\n[global]\n");
+    fprintf(f, "selected_host=%d\n", selected_host_idx);
+    fprintf(f, "fps=%d\n", ui_fps);
+    fprintf(f, "bitrate_idx=%d\n", ui_bitrate_idx);
+    fprintf(f, "mouse_mode=%d\n", ui_mouse_mode);
+    fprintf(f, "vsync=%d\n", ui_vsync ? 1 : 0);
+    fprintf(f, "stats=%d\n", show_stats ? 1 : 0);
+    fprintf(f, "verbose=%d\n", ui_verbose ? 1 : 0);
+
+    for (int i = 0; i < saved_host_count; i++) {
+        fprintf(f, "\n[host.%d]\n", i);
+        fprintf(f, "name=%s\n", saved_hosts[i].name);
+        fprintf(f, "address=%s\n", saved_hosts[i].address);
+        fprintf(f, "paired=%d\n", saved_hosts[i].paired);
+        fprintf(f, "last_app=%d\n", saved_hosts[i].last_app_id);
+    }
+
+    fflush(f);
+    fclose(f);
+
+    if (rename(tmp_path, final_path) != 0) {
+        FILE *direct = fopen(final_path, "w");
+        FILE *src = fopen(tmp_path, "r");
+        if (direct && src) {
+            char buf[256]; size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), src)) > 0) fwrite(buf, 1, n, direct);
+        }
+        if (direct) fclose(direct);
+        if (src) fclose(src);
+        remove(tmp_path);
     }
 }
 
 void ui_load_settings(void) {
     FILE *f = fopen(CONFIG_PATH, "r");
-    if (!f) {
-        f = fopen("config.ini", "r");
-    }
+    if (!f) f = fopen("config.ini", "r");
     if (!f) return;
-    
+
+    saved_host_count = 0;
+    selected_host_idx = -1;
+    char section[32] = "";
+    int current_host_idx = -1;
+
     char line[128];
     while (fgets(line, sizeof(line), f)) {
         char *p = line;
         while (*p == ' ' || *p == '\t') p++;
         if (*p == '#' || *p == ';' || *p == '\0' || *p == '\r' || *p == '\n') continue;
-        
         char *end = p + strlen(p) - 1;
-        while (end >= p && (*end == '\r' || *end == '\n' || *end == ' ' || *end == '\t')) {
-            *end = '\0';
-            end--;
-        }
-        
-        char key[64] = {0};
-        char val[64] = {0};
-        if (sscanf(p, "%63[^=]=%63s", key, val) == 2) {
-            if (strcmp(key, "host_ip") == 0 || strcmp(key, "ip") == 0) {
-                if (val[0] != '\0') {
-                    ui_set_target_ip(val);
-                }
-            } else if (strcmp(key, "fps") == 0) {
-                int v = atoi(val);
-                if (v == 30 || v == 60) ui_fps = v;
-            } else if (strcmp(key, "bitrate_idx") == 0) {
-                int v = atoi(val);
-                if (v >= 0 && v < NUM_BITRATE_OPTIONS) ui_bitrate_idx = v;
-            } else if (strcmp(key, "mouse_mode") == 0) {
-                int v = atoi(val);
-                if (v == 0 || v == 1) ui_mouse_mode = v;
-            } else if (strcmp(key, "vsync") == 0) {
-                ui_vsync = (atoi(val) != 0);
-            } else if (strcmp(key, "stats") == 0) {
-                show_stats = (atoi(val) != 0);
-            } else if (strcmp(key, "verbose") == 0) {
-                ui_verbose = (atoi(val) != 0);
+        while (end >= p && (*end == '\r' || *end == '\n' || *end == ' ' || *end == '\t'))
+            *end-- = '\0';
+        if (*p == '\0') continue;
+
+        if (*p == '[') {
+            char *close = strchr(p, ']');
+            if (close) {
+                *close = '\0';
+                snprintf(section, sizeof(section), "%s", p + 1);
+                if (strncmp(section, "host.", 5) == 0) {
+                    current_host_idx = saved_host_count;
+                    if (current_host_idx < UI_MAX_SAVED_HOSTS) {
+                        memset(&saved_hosts[current_host_idx], 0, sizeof(saved_hosts[current_host_idx]));
+                        saved_hosts[current_host_idx].last_app_id = -1;
+                        saved_host_count++;
+                    }
+                } else { current_host_idx = -1; }
             }
+            continue;
+        }
+
+        char *eq = strchr(p, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        const char *key = p;
+        const char *val = eq + 1;
+
+        if (section[0] == '\0' || strcmp(section, "global") == 0) {
+            if (strcmp(key, "selected_host") == 0) selected_host_idx = atoi(val);
+            else if (strcmp(key, "fps") == 0) { int v = atoi(val); if (v==30||v==60) ui_fps=v; }
+            else if (strcmp(key, "bitrate_idx") == 0) { int v = atoi(val); if (v>=0&&v<NUM_BITRATE_OPTIONS) ui_bitrate_idx=v; }
+            else if (strcmp(key, "mouse_mode") == 0) { int v = atoi(val); if (v==0||v==1) ui_mouse_mode=v; }
+            else if (strcmp(key, "vsync") == 0) ui_vsync = (atoi(val) != 0);
+            else if (strcmp(key, "stats") == 0) show_stats = (atoi(val) != 0);
+            else if (strcmp(key, "verbose") == 0) ui_verbose = (atoi(val) != 0);
+            else if ((strcmp(key, "host_ip") == 0 || strcmp(key, "ip") == 0) && val[0]) {
+                if (saved_host_count == 0) {
+                    int i = ui_upsert_saved_host("Saved Host", val);
+                    selected_host_idx = i;
+                }
+            }
+        } else if (current_host_idx >= 0 && current_host_idx < UI_MAX_SAVED_HOSTS) {
+            if (strcmp(key, "name") == 0)
+                strncpy(saved_hosts[current_host_idx].name, val, sizeof(saved_hosts[current_host_idx].name) - 1);
+            else if (strcmp(key, "address") == 0)
+                strncpy(saved_hosts[current_host_idx].address, val, sizeof(saved_hosts[current_host_idx].address) - 1);
+            else if (strcmp(key, "paired") == 0) saved_hosts[current_host_idx].paired = atoi(val);
+            else if (strcmp(key, "last_app") == 0) saved_hosts[current_host_idx].last_app_id = atoi(val);
         }
     }
     fclose(f);
+
+    if (selected_host_idx < 0 || selected_host_idx >= saved_host_count)
+        selected_host_idx = (saved_host_count > 0) ? 0 : -1;
+    if (selected_host_idx >= 0)
+        ui_set_target_ip(saved_hosts[selected_host_idx].address);
 }
 
 static void ascii_to_utf16(u16 *dst, const char *src, int max_len) {
@@ -265,10 +418,11 @@ static void ui_osk_callback(u64 status, u64 param, void *usrdata) {
         if (ret_param.res == OSK_OK) {
             char entered_text[64];
             utf16_to_ascii(entered_text, osk_output, sizeof(entered_text));
-            ui_set_target_ip(entered_text);
-            ui_save_settings();
+            int idx = ui_upsert_saved_host("Manual Entry", entered_text);
+            ui_select_host(idx);
             char log_msg[96];
-            snprintf(log_msg, sizeof(log_msg), "Host saved: %s", target_ip_str);
+            snprintf(log_msg, sizeof(log_msg), "Host saved: %s", entered_text);
+            ui_save_settings();
             ui_push_log(log_msg);
         } else {
             ui_push_log("OSK: Finished");
@@ -803,7 +957,8 @@ static void ui_loop(void *arg) {
                 if (active_main_item == 0) {
                     // Host IP row: Open native OSK keyboard on Cross, Left, or Right
                     if ((pad.buttons_pressed & A_FLAG) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
-                        ui_open_osk();
+                        ui_reset_host_selection();
+                        ui_state = UI_STATE_DISCOVERY;
                     }
                 } else if (active_main_item == 1) {
                     // Settings Submenu: Enter stream configuration menu
@@ -910,7 +1065,25 @@ static void ui_loop(void *arg) {
             }
             // Circle button returns to main menu
             if (pad.buttons_pressed & B_FLAG) {
-                app_selection_confirmed = 0;
+				app_selection_confirmed = 0;
+				ui_state = UI_STATE_IP_ENTRY;
+			}
+        } else if (ui_state == UI_STATE_DISCOVERY) {
+            if (discovery_scanned) {
+                int total_rows = discovered_host_count + 1;
+                if (pad.buttons_pressed & UP_FLAG)
+                    active_host_idx = (active_host_idx + total_rows - 1) % total_rows;
+                if (pad.buttons_pressed & DOWN_FLAG)
+                    active_host_idx = (active_host_idx + 1) % total_rows;
+                if (pad.buttons_pressed & A_FLAG) {
+                    if (active_host_idx == discovered_host_count)
+                        manual_entry_requested = 1;
+                    else
+                        host_selection_confirmed = 1;
+                }
+            }
+            if (pad.buttons_pressed & B_FLAG) {
+                ui_reset_host_selection();
                 ui_state = UI_STATE_IP_ENTRY;
             }
         }
@@ -1242,7 +1415,42 @@ static void ui_loop(void *arg) {
                 SetFontSize(SF(18), SF(18));
                 SetFontColor(0xff9e9e9e, 0);
                 DrawString(SX(60), SY(445), "\x05 Navigate   |   \x01 Launch Game   |   \x02 Cancel");
-            } else if (ui_state == UI_STATE_ERROR) {
+                } else if (ui_state == UI_STATE_DISCOVERY) {
+                SetFontSize(SF(26), SF(26));
+                SetFontColor(0xffffffff, 0);
+                DrawString(SX(40), SY(18), "Moonlight PS3  -  Find Host");
+
+                if (!discovery_scanned) {
+                    SetFontSize(SF(24), SF(24));
+                    SetFontColor(0xff82b1ff, 0);
+                    DrawString(SX(60), SY(180), "Scanning for Sunshine hosts on the LAN...");
+                } else {
+                    SetFontSize(SF(20), SF(20));
+                    SetFontColor(0xffb0bec5, 0);
+                    if (discovered_host_count == 0)
+                        DrawString(SX(60), SY(110), "No hosts found automatically.");
+                    else
+                        DrawFormatString(SX(60), SY(95), "Found %d host(s):", discovered_host_count);
+
+                    int total_rows = discovered_host_count + 1;
+                    for (int i = 0; i < total_rows; i++) {
+                        float row_y = SY(140) + (i * SY(40));
+                        char label_buf[96];
+                        if (i == discovered_host_count)
+                            snprintf(label_buf, sizeof(label_buf), "[ Enter IP manually... ]");
+                        else
+                            snprintf(label_buf, sizeof(label_buf), "%s  (%s)",
+                                     discovered_hosts[i].name, discovered_hosts[i].address);
+                        SetFontSize(SF(22), SF(22));
+                        SetFontColor((i == active_host_idx) ? 0xff82b1ff : 0xffffffff, 0);
+                        DrawFormatString(SX(70), row_y, "%s %s",
+                                        (i == active_host_idx) ? "[ > ]" : "     ", label_buf);
+                    }
+                }
+                SetFontSize(SF(18), SF(18));
+                SetFontColor(0xff9e9e9e, 0);
+                DrawString(SX(60), SY(445), "\x05 Navigate   |   \x01 Select   |   \x02 Back");
+			} else if (ui_state == UI_STATE_ERROR) {
                 SetFontSize(SF(26), SF(26));
                 SetFontColor(0xffff5252, 0);
                 DrawString(SX(60), SY(200), "ERROR: Target unreachable or Pairing failed.");
