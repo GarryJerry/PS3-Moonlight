@@ -131,6 +131,12 @@ int main(int argc, char **argv) {
       // Handshake
       NLOG("H: Initializing Handshake...");
       handshake_info_t hinfo = {0};
+      /* Pass the saved host name to keep the cert file stable
+       * even when the IP changes due to DHCP. */
+      const ui_saved_host_t *saved = ui_get_saved_host(ui_get_selected_host_index());
+      if (saved && saved->name[0] != '\0') {
+          strncpy(hinfo.host_name, saved->name, sizeof(hinfo.host_name) - 1);
+      }
       if (hv_init(&hinfo, pcIp) != 0) {
         if (ui_get_state() == UI_STATE_IP_ENTRY) continue;
         NLOG("H: hv_init failed!");
