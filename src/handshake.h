@@ -7,6 +7,7 @@
 
 typedef struct {
     char address[64];
+    char host_name[64]; /* stable key for the cert file (does not change with DHCP) */
     char client_cert_path[256];
     char client_key_path[256];
     char server_cert_hash_path[256];

@@ -558,7 +558,13 @@ cleanup:
 
 int hv_init(handshake_info_t *info, const char *address) {
     if (!info || !address) return -1;
+    /* Preserve host_name set by the caller before zeroing the struct --
+     * it is used below to build the cert hash path and must survive memset. */
+    char preserved_host_name[64];
+    strncpy(preserved_host_name, info->host_name, sizeof(preserved_host_name) - 1);
+    preserved_host_name[sizeof(preserved_host_name) - 1] = '\0';
     memset(info, 0, sizeof(*info));
+    strncpy(info->host_name, preserved_host_name, sizeof(info->host_name) - 1);
     if (snprintf(info->address, sizeof(info->address), "%s", address) >=
         (int)sizeof(info->address)) return -1;
     
@@ -568,8 +574,11 @@ int hv_init(handshake_info_t *info, const char *address) {
     snprintf(info->client_cert_path, sizeof(info->client_cert_path), "%s/cert.pem", base_path);
     snprintf(info->client_key_path, sizeof(info->client_key_path), "%s/key.pem", base_path);
 
-    char host_id[sizeof(info->address)];
-    snprintf(host_id, sizeof(host_id), "%s", info->address);
+    /* Use host_name as the cert file key when available (stable even if the IP
+     * changes due to DHCP), otherwise fall back to the IP address as before. */
+    const char *cert_key_src = (info->host_name[0] != '\0') ? info->host_name : info->address;
+    char host_id[128];
+    snprintf(host_id, sizeof(host_id), "%s", cert_key_src);
     for (size_t i = 0; host_id[i] != '\0'; i++) {
         if (!isalnum((unsigned char)host_id[i])) host_id[i] = '_';
     }
