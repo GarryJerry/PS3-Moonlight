@@ -1187,7 +1187,13 @@ static void ui_loop(void *arg) {
                 float next_x = DrawString(SX(60), SY(125), "Sunshine Host:");
                 
                 SetFontColor((active_main_item == 0) ? 0xff82b1ff : 0xffffffff, 0);
-                DrawFormatString(next_x + SX(20), SY(125), "[ %s ]", target_ip_str);
+                /* Show "Name (IP)" when a named host is selected, IP-only as fallback */
+                const ui_saved_host_t *cur = ui_get_saved_host(selected_host_idx);
+                if (cur && cur->name[0] != '\0' && strcmp(cur->name, "Manual Entry") != 0) {
+                    DrawFormatString(next_x + SX(20), SY(125), "[ %s (%s) ]", cur->name, target_ip_str);
+                } else {
+                    DrawFormatString(next_x + SX(20), SY(125), "[ %s ]", target_ip_str);
+                }
 
                 // Row 1: Settings Sub-menu Link
                 SetFontSize(SF(24), SF(24));
