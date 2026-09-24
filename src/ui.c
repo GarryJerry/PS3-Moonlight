@@ -36,6 +36,10 @@ static float scale_x = 1.0f;
 static float scale_y = 1.0f;
 static float scale_font = 1.0f;
 static volatile int ui_state = UI_STATE_IP_ENTRY;
+static int ui_confirm_button = A_FLAG;
+static int ui_confirm_glyph = 1;
+static int ui_cancel_button = B_FLAG;
+static int ui_cancel_glyph = 2;
 
 #define SX(x) ((float)(x) * scale_x)
 #define SY(y) ((float)(y) * scale_y)
@@ -248,7 +252,7 @@ void ui_set_target_ip(const char *str) {
                 ip_octets[i] = o[i];
             }
         }
-        snprintf(target_ip_str, sizeof(target_ip_str), "%d.%d.%d.%d", 
+        snprintf(target_ip_str, sizeof(target_ip_str), "%d.%d.%d.%d",
                  ip_octets[0], ip_octets[1], ip_octets[2], ip_octets[3]);
     } else {
         strncpy(target_ip_str, str, sizeof(target_ip_str) - 1);
@@ -258,7 +262,7 @@ void ui_set_target_ip(const char *str) {
 
 const char* ui_get_target_ip() {
     if (target_ip_str[0] == '\0') {
-        snprintf(target_ip_str, sizeof(target_ip_str), "%d.%d.%d.%d", 
+        snprintf(target_ip_str, sizeof(target_ip_str), "%d.%d.%d.%d",
                  ip_octets[0], ip_octets[1], ip_octets[2], ip_octets[3]);
     }
     return target_ip_str;
@@ -418,7 +422,7 @@ static void ui_osk_callback(u64 status, u64 param, void *usrdata) {
         ret_param.str = osk_output;
         ret_param.len = 64;
         oskUnloadAsync(&ret_param);
-        
+
         if (ret_param.res == OSK_OK) {
             char entered_text[64];
             utf16_to_ascii(entered_text, osk_output, sizeof(entered_text));
@@ -448,7 +452,7 @@ static void ui_osk_callback(u64 status, u64 param, void *usrdata) {
 
 void ui_open_osk(void) {
     if (osk_active) return;
-    
+
     // Allocate 4MB memory container required by GameOS OSK service
     if (sysMemContainerCreate(&osk_container, 4 * 1024 * 1024) != 0) {
         ui_push_log("OSK Error: Memory container allocation failed");
@@ -456,10 +460,10 @@ void ui_open_osk(void) {
     }
     osk_container_created = 1;
     osk_active = 1;
-    
+
     oskParam param;
     memset(&param, 0, sizeof(oskParam));
-    param.allowedPanels = OSK_PANEL_TYPE_DEFAULT | OSK_PANEL_TYPE_ALPHABET | 
+    param.allowedPanels = OSK_PANEL_TYPE_DEFAULT | OSK_PANEL_TYPE_ALPHABET |
                           OSK_PANEL_TYPE_NUMERAL | OSK_PANEL_TYPE_URL | OSK_PANEL_TYPE_LATIN;
     param.firstViewPanel = OSK_PANEL_TYPE_URL;
     param.controlPoint.x = 0.0f;
@@ -650,6 +654,16 @@ void ui_init(int width, int height) {
     } else {
         ui_running = 0;
     }
+
+    // Swap confirm and cancel buttons to match system
+    int button_assign = 1;
+    sysUtilGetSystemParamInt(SYSUTIL_SYSTEMPARAM_ID_ENTER_BUTTON_ASSIGN, &button_assign);
+    if (button_assign == 0) {
+        ui_confirm_button = B_FLAG;
+        ui_confirm_glyph = 2;
+        ui_cancel_button = A_FLAG;
+        ui_cancel_glyph = 1;
+    }
 }
 
 void ui_push_log(const char *msg) {
@@ -717,19 +731,19 @@ static void render_ps_button_glyph(u8 chr, u8 *bitmap, short *w, short *h, short
     *w = 26;
     *h = 28;
     *y_correction = 2; // Aligned with baseline
-    
+
     float cx = 13.0f;
     float cy = 14.0f;
     float r_outer = 11.5f;
     float r_inner = 9.5f;
-    
+
     for (int y = 0; y < 28; y++) {
         for (int x = 0; x < 26; x++) {
             float dx = (float)x - cx;
             float dy = (float)y - cy;
             float d = sqrtf(dx * dx + dy * dy);
             float alpha = 0.0f;
-            
+
             if (chr == 1) {
                 // Cross (✕) Button Badge
                 if (d <= r_outer && d >= r_inner) {
@@ -823,7 +837,7 @@ static void render_ps_button_glyph(u8 chr, u8 *bitmap, short *w, short *h, short
                     }
                 }
             }
-            
+
             if (alpha > 255.0f) alpha = 255.0f;
             bitmap[y * 32 + x] = (u8)alpha;
         }
@@ -835,15 +849,15 @@ static void ttf_render_callback(u8 chr, u8 *bitmap, short *w, short *h, short *y
     *w = 0;
     *h = 0;
     *y_correction = 0;
-    
+
     // Check for Custom Glyph slots (1: Cross, 2: Circle, 3: Triangle, 4: Square, 5: D-Pad, 6: Heart)
     if (chr >= 1 && chr <= 6) {
         render_ps_button_glyph(chr, bitmap, w, h, y_correction);
         return;
     }
-    
+
     if (!ft_face) return;
-    
+
     // Custom spacing for space character
     if (chr == ' ') {
         *w = 10;
@@ -851,25 +865,25 @@ static void ttf_render_callback(u8 chr, u8 *bitmap, short *w, short *h, short *y
         *y_correction = 0;
         return;
     }
-    
+
     FT_UInt glyph_index = FT_Get_Char_Index(ft_face, (FT_ULong)chr);
     if (glyph_index == 0) return;
-    
+
     if (FT_Load_Glyph(ft_face, glyph_index, FT_LOAD_DEFAULT)) return;
     if (FT_Render_Glyph(ft_face->glyph, FT_RENDER_MODE_NORMAL)) return;
-    
+
     FT_GlyphSlot slot = ft_face->glyph;
     int bw = slot->bitmap.width;
     int bh = slot->bitmap.rows;
     if (bw > 32) bw = 32;
     if (bh > 32) bh = 32;
-    
+
     *w = (short)(slot->advance.x >> 6);
     if (*w <= 0) *w = (short)(bw + 2);
     *h = (short)bh;
     *y_correction = (short)(26 - slot->bitmap_top);
     if (*y_correction < 0) *y_correction = 0;
-    
+
     for (int y = 0; y < bh; y++) {
         for (int x = 0; x < bw; x++) {
             u8 val = slot->bitmap.buffer[y * slot->bitmap.pitch + x];
@@ -881,7 +895,7 @@ static void ttf_render_callback(u8 chr, u8 *bitmap, short *w, short *h, short *y
 static void ui_init_fonts() {
     ResetFont();
     font_is_ttf = 0;
-    
+
     // PlayStation 3 internal system fonts (ordered by preference)
     static const char *font_candidates[] = {
         "/dev_flash/data/font/SCE-PS3-RD-R-LATIN.TTF",
@@ -890,12 +904,12 @@ static void ui_init_fonts() {
         "/dev_flash/data/font/SCE-PS3-DH-R-CGB.TTF",
         NULL
     };
-    
+
     if (FT_Init_FreeType(&ft_library) == 0) {
         for (int i = 0; font_candidates[i] != NULL; i++) {
             if (FT_New_Face(ft_library, font_candidates[i], 0, &ft_face) == 0) {
                 FT_Set_Pixel_Sizes(ft_face, 0, 30);
-                
+
                 texture_mem = tiny3d_AllocTexture(1024 * 1024);
                 if (texture_mem) {
                     AddFontFromTTF((u8 *)texture_mem, 1, 127, 32, 32, ttf_render_callback);
@@ -908,7 +922,7 @@ static void ui_init_fonts() {
             }
         }
     }
-    
+
     // Fallback to built-in bitmap font if TTF failed or files unavailable
     if (!font_is_ttf) {
         if (!texture_mem) {
@@ -919,7 +933,7 @@ static void ui_init_fonts() {
             ui_push_log("Font: Loaded fallback 8x8 bitmap font");
         }
     }
-    
+
     SetCurrentFont(0);
     SetFontSize(SF(16), SF(16));
     SetFontColor(0xffffffff, 0x00000000);
@@ -928,24 +942,24 @@ static void ui_init_fonts() {
 static void ui_loop(void *arg) {
     (void)arg;
     ps3_pad_state_t pad;
-    
+
     tiny3d_Init(1024 * 1024); // 1MB vertex buffer
     ui_init_fonts();
-    
+
     // Enable Alpha Test and Blending to eliminate solid black texture boxes around font glyphs
     tiny3d_AlphaTest(1, 0, TINY3D_ALPHA_FUNC_GREATER);
-    tiny3d_BlendFunc(1, 
+    tiny3d_BlendFunc(1,
         TINY3D_BLEND_FUNC_SRC_RGB_SRC_ALPHA | TINY3D_BLEND_FUNC_SRC_ALPHA_SRC_ALPHA,
         TINY3D_BLEND_FUNC_DST_RGB_ONE_MINUS_SRC_ALPHA | TINY3D_BLEND_FUNC_DST_ALPHA_ONE_MINUS_SRC_ALPHA,
         TINY3D_BLEND_RGB_FUNC_ADD | TINY3D_BLEND_ALPHA_FUNC_ADD);
-    
+
     while (ui_running) {
         // Pump sysutil event callbacks to service OSK and GameOS events
         sysUtilCheckCallback();
         ps3input_get_data(&pad);
-        
+
         tiny3d_Clear(0x303030ff, TINY3D_CLEAR_ALL);
-        
+
         // Handle input for UI menu states when OSK dialog is not actively capturing input
         if (ui_state == UI_STATE_IP_ENTRY) {
             if (!osk_active && !msg_dialog_active) {
@@ -956,34 +970,34 @@ static void ui_loop(void *arg) {
                 if (pad.buttons_pressed & DOWN_FLAG) {
                     active_main_item = (active_main_item + 1) % MAIN_MENU_ITEM_COUNT;
                 }
-                
+
                 // Action handling per main menu item
                 if (active_main_item == 0) {
                     // Host IP row: Open native OSK keyboard on Cross, Left, or Right
-                    if ((pad.buttons_pressed & A_FLAG) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
+                    if ((pad.buttons_pressed & ui_confirm_button) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
                         ui_reset_host_selection();
                         ui_state = UI_STATE_DISCOVERY;
                     }
                 } else if (active_main_item == 1) {
                     // Settings Submenu: Enter stream configuration menu
-                    if ((pad.buttons_pressed & A_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
+                    if ((pad.buttons_pressed & ui_confirm_button) || (pad.buttons_pressed & RIGHT_FLAG)) {
                         ui_state = UI_STATE_SETTINGS;
                         active_settings_item = 0;
                     }
                 } else if (active_main_item == 2) {
                     // Connect / Pair action button
-                    if (pad.buttons_pressed & A_FLAG) {
+                    if (pad.buttons_pressed & ui_confirm_button) {
                         ui_state = UI_STATE_PAIRING;
                     }
                 }
-                
+
                 // START button initiates connection immediately from anywhere in main menu
                 if (pad.buttons_pressed & PLAY_FLAG) {
                     ui_state = UI_STATE_PAIRING;
                 }
 
-                // Circle button opens native PS3 confirmation dialog to exit to XMB
-                if (pad.buttons_pressed & B_FLAG) {
+                // Cancel button opens native PS3 confirmation dialog to exit to XMB
+                if (pad.buttons_pressed & ui_cancel_button) {
                     ui_open_exit_dialog();
                 }
             }
@@ -995,16 +1009,16 @@ static void ui_loop(void *arg) {
             if (pad.buttons_pressed & DOWN_FLAG) {
                 active_settings_item = (active_settings_item + 1) % SETTINGS_ITEM_COUNT;
             }
-            
+
             if (active_settings_item == 0) {
                 // Target FPS toggle (30 <-> 60)
-                if ((pad.buttons_pressed & A_FLAG) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
+                if ((pad.buttons_pressed & ui_confirm_button) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
                     ui_fps = (ui_fps == 30) ? 60 : 30;
                     ui_save_settings();
                 }
             } else if (active_settings_item == 1) {
                 // Target Bitrate selection
-                if ((pad.buttons_pressed & A_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
+                if ((pad.buttons_pressed & ui_confirm_button) || (pad.buttons_pressed & RIGHT_FLAG)) {
                     ui_bitrate_idx = (ui_bitrate_idx + 1) % NUM_BITRATE_OPTIONS;
                     ui_save_settings();
                 }
@@ -1014,51 +1028,51 @@ static void ui_loop(void *arg) {
                 }
             } else if (active_settings_item == 2) {
                 // Mouse Mode toggle (0: Game / Relative <-> 1: Desktop / Absolute)
-                if ((pad.buttons_pressed & A_FLAG) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
+                if ((pad.buttons_pressed & ui_confirm_button) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
                     ui_mouse_mode = !ui_mouse_mode;
                     ui_save_settings();
                 }
             } else if (active_settings_item == 3) {
                 // VSync toggle
-                if ((pad.buttons_pressed & A_FLAG) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
+                if ((pad.buttons_pressed & ui_confirm_button) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
                     ui_vsync = !ui_vsync;
                     gcmSetFlipMode(ui_vsync ? GCM_FLIP_VSYNC : GCM_FLIP_HSYNC);
                     ui_save_settings();
                 }
             } else if (active_settings_item == 4) {
                 // Stats overlay toggle
-                if ((pad.buttons_pressed & A_FLAG) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
+                if ((pad.buttons_pressed & ui_confirm_button) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
                     show_stats = !show_stats;
                     ui_save_settings();
                 }
             } else if (active_settings_item == 5) {
                 // Verbose logging toggle
-                if ((pad.buttons_pressed & A_FLAG) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
+                if ((pad.buttons_pressed & ui_confirm_button) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
                     ui_verbose = !ui_verbose;
                     ui_save_settings();
                 }
             } else if (active_settings_item == 6) {
                 // Controller layout toggle
-                if ((pad.buttons_pressed & A_FLAG) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
+                if ((pad.buttons_pressed & ui_confirm_button) || (pad.buttons_pressed & LEFT_FLAG) || (pad.buttons_pressed & RIGHT_FLAG)) {
                     ui_pad_mode = (ui_pad_mode == PAD_MODE_STANDARD) ? PAD_MODE_DS4_DIRECT : PAD_MODE_STANDARD;
                     ui_save_settings();
                 }
             } else if (active_settings_item == 7) {
                 // Back to Main Menu
-                if (pad.buttons_pressed & A_FLAG) {
+                if (pad.buttons_pressed & ui_confirm_button) {
                     ui_save_settings();
                     ui_state = UI_STATE_IP_ENTRY;
                 }
             }
-            
-            // Circle button returns to main menu from anywhere in settings
-            if (pad.buttons_pressed & B_FLAG) {
+
+            // Cancel button returns to main menu from anywhere in settings
+            if (pad.buttons_pressed & ui_cancel_button) {
                 ui_save_settings();
                 ui_state = UI_STATE_IP_ENTRY;
             }
         } else if (ui_state == UI_STATE_PAIRING) {
-            // Circle button to cancel pairing attempt
-            if (pad.buttons_pressed & B_FLAG) {
+            // Cancel button to cancel pairing attempt
+            if (pad.buttons_pressed & ui_cancel_button) {
                 ui_state = UI_STATE_IP_ENTRY;
             }
         } else if (ui_state == UI_STATE_APPLIST) {
@@ -1069,15 +1083,15 @@ static void ui_loop(void *arg) {
                 if (pad.buttons_pressed & DOWN_FLAG) {
                     active_app_idx = (active_app_idx + 1) % current_app_list.count;
                 }
-                if (pad.buttons_pressed & A_FLAG) {
+                if (pad.buttons_pressed & ui_confirm_button) {
                     app_selection_confirmed = 1;
                 }
             }
-            // Circle button returns to main menu
-            if (pad.buttons_pressed & B_FLAG) {
-				app_selection_confirmed = 0;
-				ui_state = UI_STATE_IP_ENTRY;
-			}
+            // Cancel button returns to main menu
+            if (pad.buttons_pressed & ui_cancel_button) {
+                app_selection_confirmed = 0;
+                ui_state = UI_STATE_IP_ENTRY;
+            }
         } else if (ui_state == UI_STATE_DISCOVERY) {
             if (discovery_scanned) {
                 int total_rows = discovered_host_count + 1;
@@ -1085,14 +1099,14 @@ static void ui_loop(void *arg) {
                     active_host_idx = (active_host_idx + total_rows - 1) % total_rows;
                 if (pad.buttons_pressed & DOWN_FLAG)
                     active_host_idx = (active_host_idx + 1) % total_rows;
-                if (pad.buttons_pressed & A_FLAG) {
+                if (pad.buttons_pressed & ui_confirm_button) {
                     if (active_host_idx == discovered_host_count)
                         manual_entry_requested = 1;
                     else
                         host_selection_confirmed = 1;
                 }
             }
-            if (pad.buttons_pressed & B_FLAG) {
+            if (pad.buttons_pressed & ui_cancel_button) {
                 ui_reset_host_selection();
                 ui_state = UI_STATE_IP_ENTRY;
             }
@@ -1112,17 +1126,17 @@ static void ui_loop(void *arg) {
         // 1. Draw UI / Video (Top 70%)
         tiny3d_UserViewportSurface(1, (float)ui_width, (float)ui_height);
         tiny3d_Project2D();
-        
+
         // Ensure transparent alpha blending is active for all 2D text and menu overlays
         tiny3d_AlphaTest(1, 0, TINY3D_ALPHA_FUNC_GREATER);
-        tiny3d_BlendFunc(1, 
+        tiny3d_BlendFunc(1,
             TINY3D_BLEND_FUNC_SRC_RGB_SRC_ALPHA | TINY3D_BLEND_FUNC_SRC_ALPHA_SRC_ALPHA,
             TINY3D_BLEND_FUNC_DST_RGB_ONE_MINUS_SRC_ALPHA | TINY3D_BLEND_FUNC_DST_ALPHA_ONE_MINUS_SRC_ALPHA,
             TINY3D_BLEND_RGB_FUNC_ADD | TINY3D_BLEND_ALPHA_FUNC_ADD);
-        
+
         if (ui_state == UI_STATE_STREAMING) {
             ps3video_draw();
-            
+
             // Draw Video Performance Stats HUD (Top Left) if enabled
             if (show_stats) {
                 float sx = SX(30);
@@ -1169,7 +1183,7 @@ static void ui_loop(void *arg) {
                 DrawFormatString(sx, sy + 7 * line_h, "Resolution: %dx%d", ui_width, ui_height);
                 DrawFormatString(sx, sy + 8 * line_h, "Target FPS: %d FPS", ui_get_fps());
                 DrawFormatString(sx, sy + 9 * line_h, "Bitrate: %d Mbps", ui_get_bitrate() / 1000);
-                
+
                 /* Real-time Hardware Telemetry Stream Link Activity Monitor */
                 u32 total_frames = ps3video_get_total_decoded_frames();
                 int pulse_phase = (int)((total_frames / 4) % 4);
@@ -1184,18 +1198,18 @@ static void ui_loop(void *arg) {
             }
         } else {
             draw_background_gradient();
-            
+
             if (ui_state == UI_STATE_IP_ENTRY) {
                 // Title inside #3F51B5 header bar
                 SetFontSize(SF(26), SF(26));
                 SetFontColor(0xffffffff, 0);
                 DrawString(SX(40), SY(18), "Moonlight PS3");
-                
+
                 // Row 0: Sunshine Host
                 SetFontSize(SF(24), SF(24));
                 SetFontColor((active_main_item == 0) ? 0xff82b1ff : 0xffb0bec5, 0);
                 float next_x = DrawString(SX(60), SY(125), "Sunshine Host:");
-                
+
                 SetFontColor((active_main_item == 0) ? 0xff82b1ff : 0xffffffff, 0);
                 /* Show "Name (IP)" when a named host is selected, IP-only as fallback */
                 const ui_saved_host_t *cur = ui_get_saved_host(selected_host_idx);
@@ -1209,16 +1223,16 @@ static void ui_loop(void *arg) {
                 SetFontSize(SF(24), SF(24));
                 SetFontColor((active_main_item == 1) ? 0xff82b1ff : 0xffffffff, 0);
                 DrawString(SX(60), SY(185), "[ CONFIGURE STREAM SETTINGS ]");
-                
+
                 // Active settings summary preview
                 SetFontSize(SF(18), SF(18));
                 SetFontColor(0xff9e9e9e, 0);
                 int kbps = ui_bitrate_options[ui_bitrate_idx];
                 if (kbps % 1000 == 0) {
-                    DrawFormatString(SX(60), SY(225), "Current: %d FPS  |  %d Mbps  |  Mouse: %s  |  VSync: %s", 
+                    DrawFormatString(SX(60), SY(225), "Current: %d FPS  |  %d Mbps  |  Mouse: %s  |  VSync: %s",
                                      ui_fps, kbps / 1000, (ui_mouse_mode == 0) ? "GAME" : "DESKTOP", ui_vsync ? "ON" : "OFF");
                 } else {
-                    DrawFormatString(SX(60), SY(225), "Current: %d FPS  |  %.1f Mbps  |  Mouse: %s  |  VSync: %s", 
+                    DrawFormatString(SX(60), SY(225), "Current: %d FPS  |  %.1f Mbps  |  Mouse: %s  |  VSync: %s",
                                      ui_fps, (float)kbps / 1000.0f, (ui_mouse_mode == 0) ? "GAME" : "DESKTOP", ui_vsync ? "ON" : "OFF");
                 }
 
@@ -1230,7 +1244,8 @@ static void ui_loop(void *arg) {
                 // Clean controls legend
                 SetFontSize(SF(18), SF(18));
                 SetFontColor(0xff9e9e9e, 0);
-                DrawString(SX(60), SY(445), "\x05 Navigate   |   \x01 Select   |   \x02 Exit to XMB");
+                DrawFormatString(SX(60), SY(445), "\x05 Navigate   |   %c Select   |   %c Exit to XMB",
+                                 ui_confirm_glyph, ui_cancel_glyph);
             } else if (ui_state == UI_STATE_SETTINGS) {
                 // Title inside #3F51B5 header bar
                 SetFontSize(SF(26), SF(26));
@@ -1241,14 +1256,14 @@ static void ui_loop(void *arg) {
                 SetFontSize(SF(20), SF(20));
                 SetFontColor((active_settings_item == 0) ? 0xff82b1ff : 0xffb0bec5, 0);
                 DrawString(SX(60), SY(105), "Target FPS:");
-                
+
                 SetFontColor((active_settings_item == 0) ? 0xff82b1ff : 0xffffffff, 0);
                 DrawFormatString(SX(430), SY(105), "[ %d FPS ]", ui_fps);
 
                 // Row 1: Target Bitrate
                 SetFontColor((active_settings_item == 1) ? 0xff82b1ff : 0xffb0bec5, 0);
                 DrawString(SX(60), SY(140), "Target Bitrate:");
-                
+
                 SetFontColor((active_settings_item == 1) ? 0xff82b1ff : 0xffffffff, 0);
                 int kbps = ui_bitrate_options[ui_bitrate_idx];
                 if (kbps % 1000 == 0) {
@@ -1260,28 +1275,28 @@ static void ui_loop(void *arg) {
                 // Row 2: Mouse Mode
                 SetFontColor((active_settings_item == 2) ? 0xff82b1ff : 0xffb0bec5, 0);
                 DrawString(SX(60), SY(175), "Mouse Mode:");
-                
+
                 SetFontColor((active_settings_item == 2) ? 0xff82b1ff : 0xffffffff, 0);
                 DrawFormatString(SX(430), SY(175), "[ %s ]", (ui_mouse_mode == 0) ? "GAME (Relative / 3D)" : "DESKTOP (Absolute / 1:1)");
 
                 // Row 3: VSync Mode
                 SetFontColor((active_settings_item == 3) ? 0xff82b1ff : 0xffb0bec5, 0);
                 DrawString(SX(60), SY(210), "VSync Mode:");
-                
+
                 SetFontColor((active_settings_item == 3) ? 0xff82b1ff : 0xffffffff, 0);
                 DrawFormatString(SX(430), SY(210), "[ %s ]", ui_vsync ? "ON (Smooth 60Hz)" : "OFF (Low Latency)");
 
                 // Row 4: Stats Overlay
                 SetFontColor((active_settings_item == 4) ? 0xff82b1ff : 0xffb0bec5, 0);
                 DrawString(SX(60), SY(245), "Stats Overlay:");
-                
+
                 SetFontColor((active_settings_item == 4) ? 0xff82b1ff : 0xffffffff, 0);
                 DrawFormatString(SX(430), SY(245), "[ %s ]", show_stats ? "ON" : "OFF");
 
                 // Row 5: Verbose Logging
                 SetFontColor((active_settings_item == 5) ? 0xff82b1ff : 0xffb0bec5, 0);
                 DrawString(SX(60), SY(280), "Verbose Logging:");
-                
+
                 SetFontColor((active_settings_item == 5) ? 0xff82b1ff : 0xffffffff, 0);
                 DrawFormatString(SX(430), SY(280), "[ %s ]", ui_verbose ? "ON" : "OFF");
 
@@ -1300,7 +1315,8 @@ static void ui_loop(void *arg) {
                 // Clean controls legend
                 SetFontSize(SF(18), SF(18));
                 SetFontColor(0xff9e9e9e, 0);
-                DrawString(SX(60), SY(445), "\x05 Navigate   |   \x01 Select / Change   |   \x02 Back");
+                DrawFormatString(SX(60), SY(445), "\x05 Navigate   |   %c Select / Change   |   %c Back",
+                                 ui_confirm_glyph, ui_cancel_glyph);
             } else if (ui_state == UI_STATE_PAIRING) {
                 // Title inside #3F51B5 header bar
                 SetFontSize(SF(26), SF(26));
@@ -1364,7 +1380,7 @@ static void ui_loop(void *arg) {
                 // Bottom cancel button legend
                 SetFontSize(SF(18), SF(18));
                 SetFontColor(0xff9e9e9e, 0);
-                DrawString(SX(60), SY(445), "\x02 Cancel Pairing");
+                DrawFormatString(SX(60), SY(445), "%c Cancel Pairing", ui_cancel_glyph);
             } else if (ui_state == UI_STATE_APPLIST) {
                 // Title inside #3F51B5 header bar
                 SetFontSize(SF(26), SF(26));
@@ -1437,7 +1453,8 @@ static void ui_loop(void *arg) {
                 // Clean controls legend
                 SetFontSize(SF(18), SF(18));
                 SetFontColor(0xff9e9e9e, 0);
-                DrawString(SX(60), SY(445), "\x05 Navigate   |   \x01 Launch Game   |   \x02 Cancel");
+                DrawFormatString(SX(60), SY(445), "\x05 Navigate   |   %c Launch Game   |   %c Cancel",
+                                 ui_confirm_glyph, ui_cancel_glyph);
                 } else if (ui_state == UI_STATE_DISCOVERY) {
                 SetFontSize(SF(26), SF(26));
                 SetFontColor(0xffffffff, 0);
@@ -1472,13 +1489,14 @@ static void ui_loop(void *arg) {
                 }
                 SetFontSize(SF(18), SF(18));
                 SetFontColor(0xff9e9e9e, 0);
-                DrawString(SX(60), SY(445), "\x05 Navigate   |   \x01 Select   |   \x02 Back");
-			} else if (ui_state == UI_STATE_ERROR) {
+                DrawFormatString(SX(60), SY(445), "\x05 Navigate   |   %c Select   |   %c Back",
+                                 ui_confirm_glyph, ui_cancel_glyph);
+            } else if (ui_state == UI_STATE_ERROR) {
                 SetFontSize(SF(26), SF(26));
                 SetFontColor(0xffff5252, 0);
                 DrawString(SX(60), SY(200), "ERROR: Target unreachable or Pairing failed.");
-                DrawString(SX(60), SY(260), "Press \x01 to return.");
-                if (pad.buttons_pressed & A_FLAG) ui_state = UI_STATE_IP_ENTRY;
+                DrawFormatString(SX(60), SY(260), "Press %c to return.", ui_confirm_glyph);
+                if (pad.buttons_pressed & ui_confirm_button) ui_state = UI_STATE_IP_ENTRY;
             }
         }
 
